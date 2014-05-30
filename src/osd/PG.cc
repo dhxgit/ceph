@@ -5375,6 +5375,15 @@ PG::RecoveryState::Started::Started(my_context ctx)
 }
 
 boost::statechart::result
+PG::RecoveryState::Started::react(const IntervalFlush&)
+{
+  dout(10) << "Ending blocked outgoing recovery messages" << dendl;
+  context< RecoveryMachine >().pg->recovery_state.end_block_outgoing();
+  return discard_event();
+}
+
+
+boost::statechart::result
 PG::RecoveryState::Started::react(const FlushedEvt&)
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -5425,8 +5434,29 @@ PG::RecoveryState::Reset::Reset(my_context ctx)
 {
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
+
+  reset_interval_flush();
+
   pg->flushes_in_progress = 0;
   pg->set_last_peering_reset();
+}
+
+void PG::RecoveryState::Reset::reset_interval_flush()
+{
+  context< RecoveryMachine >().log_enter(state_name);
+  PG *pg = context< RecoveryMachine >().pg;
+
+  dout(10) << "Clearing blocked outgoing recovery messages" << dendl;
+  pg->recovery_state.clear_blocked_outgoing();
+
+  if (!pg->osr->flush_commit(
+	new QueuePeeringEvt<IntervalFlush>(
+	  pg, pg->get_osdmap()->get_epoch(), IntervalFlush()))) {
+    dout(10) << "Beginning to block outgoing recovery messages" << dendl;
+    pg->recovery_state.begin_block_outgoing();
+  } else {
+    dout(10) << "Not blocking outgoing recovery messages" << dendl;
+  }
 }
 
 boost::statechart::result
@@ -5434,6 +5464,14 @@ PG::RecoveryState::Reset::react(const FlushedEvt&)
 {
   PG *pg = context< RecoveryMachine >().pg;
   pg->on_flushed();
+  return discard_event();
+}
+
+boost::statechart::result
+PG::RecoveryState::Reset::react(const IntervalFlush&)
+{
+  dout(10) << "Ending blocked outgoing recovery messages" << dendl;
+  context< RecoveryMachine >().pg->recovery_state.end_block_outgoing();
   return discard_event();
 }
 
@@ -5459,6 +5497,7 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
       advmap.newup, advmap.up_primary,
       advmap.newacting, advmap.acting_primary,
       context< RecoveryMachine >().get_cur_transaction());
+    reset_interval_flush();
   }
   pg->remove_down_peer_info(advmap.osdmap);
   return discard_event();
