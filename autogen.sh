@@ -33,6 +33,7 @@ aclocal -I m4 --install
 check_for_pkg_config
 $LIBTOOLIZE --force --copy
 aclocal -I m4 --install
+sed -i s/"python python2"/"python2 python"/ aclocal.m4
 autoconf
 autoheader
 automake -a --add-missing -Wall
